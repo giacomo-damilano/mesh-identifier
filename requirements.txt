@@ -1,4 +1,4 @@
-opencv-python==4.12.0.88
+opencv-python-headless==4.12.0.88
 numpy==2.2.6
 joblib==1.5.2
 pytoshop==1.2.1

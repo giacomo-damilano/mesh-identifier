@@ -240,9 +240,37 @@ def select_polygons(items: Sequence[Dict], neighbors: Sequence[set]) -> List[Dic
     return chosen
 
 
+def select_polygons_ranked(items: Sequence[Dict], neighbors: Sequence[set]) -> List[Dict]:
+    """Return non-overlapping polygons prioritising rectangular fitness."""
+
+    if not items:
+        return []
+
+    scores = np.array([item["score"] for item in items], dtype=np.float32)
+    areas = np.array([item["area"] for item in items], dtype=np.float32)
+    order = np.lexsort((-areas, scores))
+
+    selected = np.zeros(len(items), dtype=bool)
+    banned = np.zeros(len(items), dtype=bool)
+
+    for idx in order:
+        if banned[idx]:
+            continue
+        selected[idx] = True
+        for j in neighbors[idx]:
+            banned[j] = True
+
+    chosen = [items[i] for i in range(len(items)) if selected[i]]
+    LOGGER.info(
+        "Selected %d non-overlapping polygons using ranked heuristic", len(chosen)
+    )
+    return chosen
+
+
 __all__ = [
     "process_batch",
     "build_candidates",
     "build_conflict_graph",
     "select_polygons",
+    "select_polygons_ranked",
 ]
