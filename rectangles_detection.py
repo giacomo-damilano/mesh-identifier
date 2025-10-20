@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List, Sequence, Tuple
 import cv2
 import numpy as np
 from joblib import Parallel, delayed
+from pytoshop import enums
 from pytoshop.user import nested_layers
 from scipy.spatial import cKDTree
 
@@ -381,19 +382,45 @@ def render_layers(image: np.ndarray, centers: np.ndarray, polygons: Sequence[Dic
     lines_layer = cv_to_rgba(lines)
     dots_layer = cv_to_rgba(dots)
 
-    for data, name in [(background, "Background"), (lines_layer, "Lines"), (dots_layer, "Dots")]:
+    def rgba_to_layer(name: str, data: np.ndarray) -> nested_layers.Image:
         if data.ndim != 3 or data.shape[2] != 4:
             raise ValueError(f"Layer {name} is not RGBA")
         if data.dtype != np.uint8:
             raise ValueError(f"Layer {name} must be uint8")
 
+        height, width = data.shape[:2]
+        planes = np.transpose(data, (2, 0, 1))
+        channels = {
+            0: planes[0],
+            1: planes[1],
+            2: planes[2],
+            enums.ChannelId.transparency: planes[3],
+        }
+
+        return nested_layers.Image(
+            name=name,
+            top=0,
+            left=0,
+            bottom=height,
+            right=width,
+            color_mode=enums.ColorMode.rgb,
+            channels=channels,
+        )
+
     layers = [
-        nested_layers.Image(name="Background", image=background),
-        nested_layers.Image(name="Lines", image=lines_layer),
-        nested_layers.Image(name="Dots", image=dots_layer),
+        rgba_to_layer("Background", background),
+        rgba_to_layer("Lines", lines_layer),
+        rgba_to_layer("Dots", dots_layer),
     ]
 
-    psd = nested_layers.nested_layers_to_psd(layers)
+    height, width = image.shape[:2]
+    psd = nested_layers.nested_layers_to_psd(
+        layers,
+        color_mode=enums.ColorMode.rgb,
+        depth=8,
+        size=(height, width),
+        compression=enums.Compression.raw,
+    )
     psd_path = config.output_path.replace(".png", "_layers.psd")
     try:
         with open(psd_path, "wb") as handle:
