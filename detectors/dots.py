@@ -15,16 +15,43 @@ from .config import DetectionConfig
 def load_image(path: str) -> np.ndarray:
     """Load a BGR image from *path* and log the result."""
     LOGGER.info("Loading image from %s", path)
-    image = cv2.imread(path)
+    image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if image is None:
         raise FileNotFoundError(f"Cannot read image: {path}")
+
+    if image.ndim == 3 and image.shape[2] == 4:
+        # Preserve fully transparent pixels as white after dropping alpha so
+        # they do not appear as black.
+        alpha = image[:, :, 3]
+        bgr = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        transparent_mask = alpha == 0
+        if np.any(transparent_mask):
+            bgr[transparent_mask] = (255, 255, 255)
+        image = bgr
+    elif image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+
     LOGGER.info("Image loaded with shape %s", image.shape)
     return image
 
 
-def detect_dots(image: np.ndarray, config: DetectionConfig) -> np.ndarray:
-    """Detect red dots and return their centroids as an ``(N, 2)`` array."""
-    LOGGER.info("Detecting dots using HSV thresholding")
+def _extract_dot_centers(mask: np.ndarray) -> np.ndarray:
+    """Return centroids for connected components that match dot heuristics."""
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    centers: List[Tuple[float, float]] = []
+    for idx in range(1, num_labels):
+        w = stats[idx, cv2.CC_STAT_WIDTH]
+        h = stats[idx, cv2.CC_STAT_HEIGHT]
+        area = stats[idx, cv2.CC_STAT_AREA]
+        if 4 <= w <= 13 and 4 <= h <= 13 and area >= 15:
+            centers.append((float(centroids[idx, 0]), float(centroids[idx, 1])))
+    return np.array(centers, dtype=np.float32)
+
+
+def _find_red_dot_candidates(image: np.ndarray) -> np.ndarray:
+    """Return centroids of red-looking blobs using HSV thresholding."""
+
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
     lower_red1 = np.array([0, 60, 70])
     upper_red1 = np.array([10, 255, 255])
@@ -37,16 +64,50 @@ def detect_dots(image: np.ndarray, config: DetectionConfig) -> np.ndarray:
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    centers: List[Tuple[float, float]] = []
-    for idx in range(1, num_labels):
-        w = stats[idx, cv2.CC_STAT_WIDTH]
-        h = stats[idx, cv2.CC_STAT_HEIGHT]
-        area = stats[idx, cv2.CC_STAT_AREA]
-        if 4 <= w <= 13 and 4 <= h <= 13 and area >= 15:
-            centers.append((float(centroids[idx, 0]), float(centroids[idx, 1])))
-    centers_array = np.array(centers, dtype=np.float32)
-    LOGGER.info("Detected %d candidate dots", len(centers_array))
+    return _extract_dot_centers(mask)
+
+
+def _find_dark_dot_candidates(image: np.ndarray) -> np.ndarray:
+    """Return centroids of dark blobs using HSV thresholding mirroring red logic."""
+
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    lower_dark = np.array([0, 0, 0])
+    upper_dark = np.array([180, 80, 120])
+    mask = cv2.inRange(hsv, lower_dark, upper_dark)
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
+
+    return _extract_dot_centers(mask)
+
+
+def _merge_candidate_sets(*arrays: np.ndarray, tol: float = 1.5) -> np.ndarray:
+    """Merge multiple point arrays while discarding near-duplicate detections."""
+
+    merged: List[Tuple[float, float]] = []
+    for arr in arrays:
+        for x, y in arr:
+            if not merged:
+                merged.append((float(x), float(y)))
+                continue
+            if any((mx - x) ** 2 + (my - y) ** 2 <= tol ** 2 for mx, my in merged):
+                continue
+            merged.append((float(x), float(y)))
+    return np.array(merged, dtype=np.float32)
+
+
+def detect_dots(image: np.ndarray, config: DetectionConfig) -> np.ndarray:
+    """Detect red and dark dots and return their centroids as an ``(N, 2)`` array."""
+
+    LOGGER.info("Detecting dots (red + dark)")
+    red_candidates = _find_red_dot_candidates(image)
+    LOGGER.info("Red candidate count: %d", len(red_candidates))
+
+    dark_candidates = _find_dark_dot_candidates(image)
+    LOGGER.info("Dark candidate count: %d", len(dark_candidates))
+
+    centers_array = _merge_candidate_sets(red_candidates, dark_candidates)
+    LOGGER.info("Total unique candidates after merge: %d", len(centers_array))
     return centers_array
 
 
