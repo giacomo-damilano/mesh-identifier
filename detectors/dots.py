@@ -24,31 +24,15 @@ def load_image(path: str) -> np.ndarray:
 
 def detect_dots(image: np.ndarray, config: DetectionConfig) -> np.ndarray:
     """Detect red dots and return their centroids as an ``(N, 2)`` array."""
-    LOGGER.info("Detecting dots using combined colour thresholds")
+    LOGGER.info("Detecting dots using HSV thresholding")
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb)
-
-    # A looser HSV range captures desaturated border dots while keeping the core grid.
-    hsv_mask_primary = cv2.inRange(
-        hsv,
-        np.array([0, 28, 35], dtype=np.uint8),
-        np.array([14, 255, 255], dtype=np.uint8),
-    )
-    hsv_mask_secondary = cv2.inRange(
-        hsv,
-        np.array([166, 28, 35], dtype=np.uint8),
-        np.array([180, 255, 255], dtype=np.uint8),
-    )
-    # YCrCb isolates red chroma even when the HSV saturation drops near white borders.
-    ycrcb_mask = cv2.inRange(
-        ycrcb,
-        np.array([0, 140, 0], dtype=np.uint8),
-        np.array([255, 205, 255], dtype=np.uint8),
-    )
-
-    mask = cv2.bitwise_or(hsv_mask_primary, hsv_mask_secondary)
-    mask = cv2.bitwise_or(mask, ycrcb_mask)
-
+    lower_red1 = np.array([0, 60, 70])
+    upper_red1 = np.array([10, 255, 255])
+    lower_red2 = np.array([170, 60, 70])
+    upper_red2 = np.array([180, 255, 255])
+    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+    mask = cv2.bitwise_or(mask1, mask2)
     kernel = np.ones((3, 3), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
@@ -59,7 +43,7 @@ def detect_dots(image: np.ndarray, config: DetectionConfig) -> np.ndarray:
         w = stats[idx, cv2.CC_STAT_WIDTH]
         h = stats[idx, cv2.CC_STAT_HEIGHT]
         area = stats[idx, cv2.CC_STAT_AREA]
-        if 4 <= w <= 14 and 4 <= h <= 14 and 15 <= area <= 63:
+        if 4 <= w <= 13 and 4 <= h <= 13 and area >= 15:
             centers.append((float(centroids[idx, 0]), float(centroids[idx, 1])))
     centers_array = np.array(centers, dtype=np.float32)
     LOGGER.info("Detected %d candidate dots", len(centers_array))
