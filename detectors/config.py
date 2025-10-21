@@ -14,7 +14,7 @@ class DetectionConfig:
     output_path: str = "back_scheme_detected.png"
 
     dot_radius: int = 6
-    line_thickness: int = 2
+    line_thickness: int = 4
     dot_color_bgr: Tuple[int, int, int] = (0, 0, 255)
     polygon_color_bgr: Tuple[int, int, int] = (0, 255, 0)
 

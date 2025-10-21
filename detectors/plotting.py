@@ -56,16 +56,19 @@ def render_layers(
     """Render the detections to disk and optionally save a layered PSD."""
 
     LOGGER.info("Rendering output layers")
+    thickness = max(int(config.line_thickness), 1)
     lines = np.zeros_like(image)
     for poly in polygons:
-        cv2.polylines(lines, [poly.astype(np.int32)], True, config.polygon_color_bgr, config.line_thickness)
+        cv2.polylines(lines, [poly.astype(np.int32)], True, config.polygon_color_bgr, thickness)
     dots = np.zeros_like(image)
     for x, y in centers:
         cv2.circle(dots, (int(x), int(y)), config.dot_radius, config.dot_color_bgr, -1)
 
     final = image.copy()
-    final = cv2.add(final, lines)
-    final = cv2.add(final, dots)
+    for poly in polygons:
+        cv2.polylines(final, [poly.astype(np.int32)], True, config.polygon_color_bgr, thickness)
+    for x, y in centers:
+        cv2.circle(final, (int(x), int(y)), config.dot_radius, config.dot_color_bgr, -1)
 
     cv2.imwrite(output_path, final)
     LOGGER.info("Saved combined output to %s", output_path)
@@ -88,7 +91,7 @@ def render_layers(
         layers,
         color_mode=enums.ColorMode.rgb,
         depth=8,
-        size=(height, width),
+        size=(width, height),
         compression=enums.Compression.raw,
     )
     psd_path = output_path.replace(".png", "_layers.psd")

@@ -102,14 +102,6 @@ def generate_overrides(config: DetectionConfig, args: argparse.Namespace) -> Lis
         minimum=0.05,
     )
 
-    axis_options = {
-        "max_angle_dev": list(dict.fromkeys(angle_options)),
-        "side_relaxation": list(dict.fromkeys(side_options)),
-        "diag_ratio_min": list(dict.fromkeys(diag_options)),
-        "aspect_max": list(dict.fromkeys(aspect_options)),
-        "distance_snap_factor": list(dict.fromkeys(snap_options)),
-    }
-
     combos = []
     for values in itertools.product(
         angle_options, side_options, diag_options, aspect_options, snap_options
@@ -138,206 +130,15 @@ def generate_overrides(config: DetectionConfig, args: argparse.Namespace) -> Lis
 
     limit = getattr(args, "max_configs", 0)
     if limit and len(deduped) > limit:
-        baseline: Dict[str, float] | None = None
-        pool = deduped
-        if deduped and deduped[0] == {}:
-            baseline = deduped[0]
-            pool = deduped[1:]
-
-        trimmed: List[Dict[str, float]] = []
-        if baseline is not None:
-            trimmed.append(baseline)
-
-        remaining_slots = limit - len(trimmed)
-        if remaining_slots <= 0:
-            deduped = trimmed[:limit]
-            return deduped
-
-        from collections import deque
-
-        angle_buckets: Dict[float, deque[Dict[str, float]]] = {}
-        order: List[float] = []
-        for entry in pool:
-            angle = entry.get("max_angle_dev")
-            if angle is None:
-                continue
-            if angle not in angle_buckets:
-                angle_buckets[angle] = deque()
-                order.append(angle)
-            angle_buckets[angle].append(entry)
-
-        idx = 0
-        while len(trimmed) < limit and angle_buckets:
-            angle = order[idx % len(order)]
-            bucket = angle_buckets.get(angle)
-            if not bucket:
-                order = [value for value in order if value in angle_buckets and angle_buckets[value]]
-                if not order:
-                    break
-                idx = idx % len(order)
-                continue
-
-            trimmed.append(bucket.popleft())
-            if not bucket:
-                angle_buckets.pop(angle, None)
-                order = [value for value in order if value in angle_buckets and angle_buckets[value]]
-                if not order:
-                    break
-                idx = idx % len(order)
-                continue
-
-            idx += 1
-
-        # If we still have capacity, fill with any remaining combinations using a stride.
-        remaining = [item for bucket in angle_buckets.values() for item in bucket]
-        if len(trimmed) < limit and remaining:
-            stride = max(1, len(remaining) // max(1, limit - len(trimmed)))
-            for i in range(0, len(remaining)):
-                if len(trimmed) >= limit:
-                    break
-                if i % stride == 0:
-                    trimmed.append(remaining[i])
-
-        # Guarantee the most permissive angle is represented when possible.
-        if angle_options:
-            widest_angle = max(angle_options)
-            has_widest = any(
-                entry.get("max_angle_dev") == widest_angle for entry in trimmed if entry
-            )
-            if not has_widest:
-                candidate = next(
-                    (entry for entry in pool if entry.get("max_angle_dev") == widest_angle),
-                    None,
-                )
-                if candidate:
-                    if len(trimmed) >= limit:
-                        # Replace the last non-baseline entry.
-                        for replace_idx in range(len(trimmed) - 1, -1, -1):
-                            if trimmed[replace_idx]:
-                                trimmed[replace_idx] = candidate
-                                break
-                    else:
-                        trimmed.append(candidate)
-
-        from collections import Counter
-
-        axes = list(axis_options.keys())
-
-        def compute_counts(entries: Sequence[Dict[str, float]]) -> Dict[str, Counter]:
-            counts = {axis: Counter() for axis in axes}
-            for entry in entries:
-                if not entry:
-                    for axis in axes:
-                        base_value = getattr(base, axis)
-                        counts[axis][base_value] += 1
-                    continue
-                for axis in axes:
-                    counts[axis][entry[axis]] += 1
-            return counts
-
-        counts = compute_counts(trimmed)
-
-        def missing_values() -> Dict[str, List[float]]:
-            return {
-                axis: [value for value in axis_options[axis] if counts[axis][value] == 0]
-                for axis in axes
-            }
-
-        missing = missing_values()
-        while any(missing.values()):
-            best_entry: Dict[str, float] | None = None
-            best_score = 0
-            for entry in pool:
-                if entry in trimmed:
-                    continue
-                score = sum(1 for axis in axes if entry[axis] in missing[axis])
-                if score > best_score:
-                    best_entry = entry
-                    best_score = score
-            if not best_entry or best_score == 0:
+        step = max(1, len(deduped) // limit)
+        trimmed = []
+        for idx, entry in enumerate(deduped):
+            if len(trimmed) >= limit:
                 break
-
-            trimmed.append(best_entry)
-            for axis in axes:
-                counts[axis][best_entry[axis]] += 1
-
-            if len(trimmed) > limit:
-                removable_idx = None
-                for idx in range(len(trimmed) - 1, -1, -1):
-                    entry = trimmed[idx]
-                    if not entry or entry is best_entry:
-                        continue
-                    can_remove = True
-                    for axis in axes:
-                        value = entry[axis]
-                        if counts[axis][value] <= 1:
-                            can_remove = False
-                            break
-                    if can_remove:
-                        removable_idx = idx
-                        break
-
-                if removable_idx is not None:
-                    removed = trimmed.pop(removable_idx)
-                    for axis in axes:
-                        counts[axis][removed[axis]] -= 1
-                else:
-                    # Cannot make room without losing coverage; undo the addition.
-                    removed = trimmed.pop()
-                    for axis in axes:
-                        counts[axis][removed[axis]] -= 1
-                    break
-
-            missing = missing_values()
-
-        permissive_target = {
-            "max_angle_dev": max(axis_options["max_angle_dev"], default=base.max_angle_dev),
-            "side_relaxation": max(axis_options["side_relaxation"], default=base.side_relaxation),
-            "diag_ratio_min": min(axis_options["diag_ratio_min"], default=base.diag_ratio_min),
-            "aspect_max": max(axis_options["aspect_max"], default=base.aspect_max),
-            "distance_snap_factor": max(
-                axis_options["distance_snap_factor"], default=base.distance_snap_factor
-            ),
-        }
-
-        target_candidate = next(
-            (
-                entry
-                for entry in pool
-                if all(entry.get(axis) == value for axis, value in permissive_target.items())
-            ),
-            None,
-        )
-        if target_candidate and target_candidate not in trimmed:
-            trimmed.append(target_candidate)
-            for axis in axes:
-                counts[axis][target_candidate[axis]] += 1
-
-            if len(trimmed) > limit:
-                removable_idx = None
-                for idx in range(len(trimmed) - 1, -1, -1):
-                    entry = trimmed[idx]
-                    if not entry or entry is target_candidate:
-                        continue
-                    can_remove = True
-                    for axis in axes:
-                        value = entry[axis]
-                        if counts[axis][value] <= 1:
-                            can_remove = False
-                            break
-                    if can_remove:
-                        removable_idx = idx
-                        break
-
-                if removable_idx is not None:
-                    removed = trimmed.pop(removable_idx)
-                    for axis in axes:
-                        counts[axis][removed[axis]] -= 1
-                else:
-                    removed = trimmed.pop()
-                    for axis in axes:
-                        counts[axis][removed[axis]] -= 1
-
+            if idx % step == 0 or not entry:
+                trimmed.append(entry)
+        if {} not in trimmed:
+            trimmed.insert(0, {})
         deduped = trimmed[:limit]
 
     return deduped
