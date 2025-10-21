@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 from typing import Dict
 
+import cv2
 import numpy as np
 
 from detectors import LOGGER
@@ -26,6 +27,16 @@ def save_dot_payload(path: Path, image_path: str, image_shape, payload: Dict[str
     LOGGER.info("Dot data saved to %s (%.2f KB)", path, path.stat().st_size / 1024.0)
 
 
+def save_image_preview(image: np.ndarray, destination: Path) -> None:
+    """Write *image* to *destination* so the loading step can be inspected."""
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    success = cv2.imwrite(str(destination), image)
+    if not success:
+        raise RuntimeError(f"Could not write preview image to {destination}")
+    LOGGER.info("Saved image preview to %s", destination)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", default="back_scheme.png", help="Input image path")
@@ -33,6 +44,11 @@ def parse_args() -> argparse.Namespace:
         "--output",
         default="dot_results.npz",
         help="Path to store the detected centers and pre-analysis data",
+    )
+    parser.add_argument(
+        "--preview",
+        type=Path,
+        help="Optional path to save a preview of the loaded image",
     )
     return parser.parse_args()
 
@@ -42,6 +58,8 @@ def main() -> None:
     config = DetectionConfig(image_path=args.image, dot_data_path=args.output)
 
     image = load_image(config.image_path)
+    if args.preview is not None:
+        save_image_preview(image, args.preview)
     centers = detect_dots(image, config)
     if len(centers) < 4:
         raise RuntimeError("Insufficient dots detected")
