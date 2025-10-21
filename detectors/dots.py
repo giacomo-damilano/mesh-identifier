@@ -44,7 +44,7 @@ def _extract_dot_centers(mask: np.ndarray) -> np.ndarray:
         w = stats[idx, cv2.CC_STAT_WIDTH]
         h = stats[idx, cv2.CC_STAT_HEIGHT]
         area = stats[idx, cv2.CC_STAT_AREA]
-        if 4 <= w <= 13 and 4 <= h <= 13 and area >= 15:
+        if 3 <= w <= 14 and 3 <= h <= 14 and area >= 9:
             centers.append((float(centroids[idx, 0]), float(centroids[idx, 1])))
     return np.array(centers, dtype=np.float32)
 
