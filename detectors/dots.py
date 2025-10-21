@@ -20,14 +20,14 @@ def load_image(path: str) -> np.ndarray:
         raise FileNotFoundError(f"Cannot read image: {path}")
 
     if image.ndim == 3 and image.shape[2] == 4:
-        # Preserve fully transparent pixels as white so they do not appear
-        # as black when the alpha channel is discarded.
+        # Preserve fully transparent pixels as white after dropping alpha so
+        # they do not appear as black.
         alpha = image[:, :, 3]
-        bgr = image[:, :, :3]
+        bgr = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
         transparent_mask = alpha == 0
         if np.any(transparent_mask):
-            bgr[transparent_mask] = 255
-        image = cv2.cvtColor(np.dstack((bgr, alpha)), cv2.COLOR_BGRA2BGR)
+            bgr[transparent_mask] = (255, 255, 255)
+        image = bgr
     elif image.ndim == 2:
         image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
 
