@@ -35,6 +35,20 @@ def load_image(path: str) -> np.ndarray:
     return image
 
 
+def _extract_dot_centers(mask: np.ndarray) -> np.ndarray:
+    """Return centroids for connected components that match dot heuristics."""
+
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    centers: List[Tuple[float, float]] = []
+    for idx in range(1, num_labels):
+        w = stats[idx, cv2.CC_STAT_WIDTH]
+        h = stats[idx, cv2.CC_STAT_HEIGHT]
+        area = stats[idx, cv2.CC_STAT_AREA]
+        if 4 <= w <= 13 and 4 <= h <= 13 and area >= 15:
+            centers.append((float(centroids[idx, 0]), float(centroids[idx, 1])))
+    return np.array(centers, dtype=np.float32)
+
+
 def _find_red_dot_candidates(image: np.ndarray) -> np.ndarray:
     """Return centroids of red-looking blobs using HSV thresholding."""
 
@@ -50,42 +64,21 @@ def _find_red_dot_candidates(image: np.ndarray) -> np.ndarray:
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    centers: List[Tuple[float, float]] = []
-    for idx in range(1, num_labels):
-        w = stats[idx, cv2.CC_STAT_WIDTH]
-        h = stats[idx, cv2.CC_STAT_HEIGHT]
-        area = stats[idx, cv2.CC_STAT_AREA]
-        if 4 <= w <= 13 and 4 <= h <= 13 and area >= 15:
-            centers.append((float(centroids[idx, 0]), float(centroids[idx, 1])))
-    return np.array(centers, dtype=np.float32)
+    return _extract_dot_centers(mask)
 
 
 def _find_dark_dot_candidates(image: np.ndarray) -> np.ndarray:
-    """Return centroids of nearly black blobs located on dark guide lines."""
+    """Return centroids of dark blobs using HSV thresholding mirroring red logic."""
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    inverted = cv2.bitwise_not(gray)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    lower_dark = np.array([0, 0, 0])
+    upper_dark = np.array([180, 80, 120])
+    mask = cv2.inRange(hsv, lower_dark, upper_dark)
+    kernel = np.ones((3, 3), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
 
-    params = cv2.SimpleBlobDetector_Params()
-    params.filterByColor = True
-    params.blobColor = 255
-    params.filterByArea = True
-    params.minArea = 12.0
-    params.maxArea = 220.0
-    params.filterByCircularity = True
-    params.minCircularity = 0.55
-    params.filterByConvexity = True
-    params.minConvexity = 0.6
-    params.filterByInertia = True
-    params.minInertiaRatio = 0.3
-
-    detector = cv2.SimpleBlobDetector_create(params)
-    keypoints = detector.detect(inverted)
-    if not keypoints:
-        return np.empty((0, 2), dtype=np.float32)
-    centers = [(float(kp.pt[0]), float(kp.pt[1])) for kp in keypoints]
-    return np.array(centers, dtype=np.float32)
+    return _extract_dot_centers(mask)
 
 
 def _merge_candidate_sets(*arrays: np.ndarray, tol: float = 1.5) -> np.ndarray:
