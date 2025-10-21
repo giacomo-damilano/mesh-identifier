@@ -15,9 +15,22 @@ from .config import DetectionConfig
 def load_image(path: str) -> np.ndarray:
     """Load a BGR image from *path* and log the result."""
     LOGGER.info("Loading image from %s", path)
-    image = cv2.imread(path)
+    image = cv2.imread(path, cv2.IMREAD_UNCHANGED)
     if image is None:
         raise FileNotFoundError(f"Cannot read image: {path}")
+
+    if image.ndim == 3 and image.shape[2] == 4:
+        # Preserve fully transparent pixels as white so they do not appear
+        # as black when the alpha channel is discarded.
+        alpha = image[:, :, 3]
+        bgr = image[:, :, :3]
+        transparent_mask = alpha == 0
+        if np.any(transparent_mask):
+            bgr[transparent_mask] = 255
+        image = cv2.cvtColor(np.dstack((bgr, alpha)), cv2.COLOR_BGRA2BGR)
+    elif image.ndim == 2:
+        image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+
     LOGGER.info("Image loaded with shape %s", image.shape)
     return image
 
